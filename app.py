@@ -42,6 +42,9 @@ header[data-testid="stHeader"],footer,#MainMenu{{display:none}}
 .kpi .kh::before{{content:'';width:8px;height:8px;border-radius:50%;background:var(--sc,{GRN})}}
 .kpi.hero{{background:linear-gradient(135deg,{SLATE},{SURF});border:2px solid var(--ac);box-shadow:0 0 0 4px rgba(255,255,255,.03);padding:20px 24px}}
 .kpi.hero .kl{{color:var(--ac);font-weight:700;font-size:.92rem}} .kpi.hero b{{font-size:2.7rem;font-weight:800;color:{TXT}}}
+.act{{--ac:{TEAL};background:{SURF};border:1px solid rgba(255,255,255,.1);border-right:7px solid var(--ac);border-radius:20px;padding:12px 20px;margin:0 0 14px}}
+.act i{{font-style:normal;font-weight:800;color:var(--ac);font-size:.9rem}} .act ol{{margin:6px 0 0;padding-right:20px}}
+.act li{{line-height:2;font-size:.92rem}} .act li b{{color:var(--ac)}}
 div[data-baseweb="tab-list"]{{gap:8px;flex-wrap:wrap;border:0;margin:6px 0 14px}}
 button[data-baseweb="tab"]{{background:{SURF};border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:9px 22px;height:auto}}
 button[data-baseweb="tab"] p{{color:{TXT}!important;font-size:.95rem;font-weight:600}}
@@ -194,8 +197,31 @@ def in_scope(df, col, a, b):
     return df[(df[col] >= a) & (df[col] < b + pd.Timedelta(days=1))]
 
 
+def domain_loss(d):
+    nf = d.NFlags.replace(0, np.nan)
+    return pd.Series({f: float((d[f] * d.Loss / nf).sum()) for f in FL})
+
+
+def treemap_fig(Lf):
+    cols = dict(zip(DOMAINS, [YEL, MINT, TEAL, GRN, CORAL]))
+    ids, par, lab, val, clr = ["root"], [""], ["کل زیان"], [float(Lf.sum())], [DEEP]
+    for dm in DOMAINS:
+        ch = {FLAGS[f][0]: v for f, v in Lf.items() if FLAGS[f][1] == dm and v > 0}
+        if not ch: continue
+        ids.append(dm); par.append("root"); lab.append(dm); val.append(sum(ch.values())); clr.append(cols[dm])
+        for t, v in ch.items():
+            ids.append(f"{dm}|{t}"); par.append(dm); lab.append(t); val.append(v); clr.append(cols[dm])
+    return go.Figure(go.Treemap(ids=ids, parents=par, labels=lab, values=val, branchvalues="total", marker=dict(colors=clr, line=dict(width=3, color=DEEP)),
+                                texttemplate="<b>%{label}</b><br>%{value:,.0f}<br>%{percentRoot:.0%}", textfont=dict(color=DEEP, size=14), tiling=dict(pad=4)))
+
+
+def actions(items, ac):
+    li = "".join(f"<li>{t}</li>" for t in items)
+    st.markdown(f'<div class="act" style="--ac:{ac}"><i>اقدام‌های پیشنهادی بر اساس داده</i><ol>{li}</ol></div>', unsafe_allow_html=True)
+
+
 # ============================================================ داشبورد ۱
-def dash1(tx, cases):
+def dash1(tx, cases, rc, cap):
     with st.sidebar:
         st.markdown("#### فیلترهای مدیریتی")
         a, b = date_scope(tx, "d1")
@@ -230,7 +256,14 @@ def dash1(tx, cases):
     kpi(c[4], "نرخ تردد ناهنجار", f"{arate * 100:.1f}٪", "حداقل یک پرچم", sev(arate, .10))
     kpi(c[5], "ترافیک شبکه", f"{d.In_Time.notna().sum()} | {d.Out_Time.notna().sum()}", f"ورود | خروج · داخل: {int(d.Out_Time.isna().sum())}")
     st.write("")
-    T = st.tabs(['ریسک و روند', 'حوزه\u200cها و رتبه\u200cبندی', 'ترافیک و پرداخت', 'رویدادهای پرخطر'])
+    Lf = domain_loss(d)
+    tdom = Lf.groupby({f: FLAGS[f][1] for f in FL}).sum().sort_values(ascending=False)
+    actions([
+        f"بازرسی میدانی <b>{worst}</b> (نمره {lb.health.min():.0f}) را همین هفته انجام دهید؛ بیشترین زیان مشکوک مربوط به <b>{lb.loss.idxmax()}</b> است ({money(lb.loss.max())}).",
+        f"بیشترین نشت مالی در حوزه <b>{tdom.index[0]}</b> ({tdom.iloc[0] / max(tdom.sum(), 1) * 100:.0f}٪ کل زیان) است؛ سرمایه‌گذاری کنترلی را اول روی همین حوزه ببرید.",
+        f"<b>{int(cs.Status.isin(['جدید', 'در حال بررسی']).sum())}</b> پرونده هنوز بسته نشده؛ برای پرونده‌های بحرانی مهلت رسیدگی ۵ روزه تعیین کنید.",
+    ], YEL)
+    T = st.tabs(['ریسک و روند', 'حوزه\u200cها و رتبه\u200cبندی', 'ترافیک و پرداخت', 'رویدادهای پرخطر', 'تابلوی شاخص\u200cهای کنترلی', 'قرارداد و روند'])
     with T[0]:
         a1, a2 = st.columns(2)
         with a1.container(border=True):
@@ -242,7 +275,7 @@ def dash1(tx, cases):
                  .update_yaxes(tickformat=".0%", rangemode="tozero"), 340)
         with a2.container(border=True):
             head("روند درآمد در برابر زیان", "درآمد (محور چپ) · زیان مشکوک و قطعی (محور راست)")
-            day = d.assign(day=d.Event_Time.dt.date)
+            day = d[d.Out_Time.notna()].assign(day=lambda x: x.Out_Time.dt.date)
             t = pd.DataFrame({"rev": day.groupby("day").Fare_Paid.sum(),
                               "susp": day[day.Risk_Score >= 30].groupby("day").Loss.sum(),
                               "conf": cs.assign(day=cs.Event_Time.dt.date).groupby("day").Confirmed_Loss.sum()}).fillna(0)
@@ -255,10 +288,10 @@ def dash1(tx, cases):
         b1, b2 = st.columns([2, 3])
         with b1.container(border=True):
             head("سهم حوزه‌های تخلف از کل زیان", "تعیین اولویت سرمایه‌گذاری امنیتی")
-            L = pd.Series({f: (d[f] * d.Loss / d.NFlags.replace(0, np.nan)).sum() for f in FL})
-            tm = pd.DataFrame({"عنوان": [FLAGS[f][0] for f in FL], "حوزه": [FLAGS[f][1] for f in FL], "زیان": L.values}).query("زیان>0")
-            show(px.treemap(tm, path=["حوزه", "عنوان"], values="زیان", color="حوزه",
-                            color_discrete_sequence=[YEL, MINT, TEAL, GRN, CORAL]), 340)
+            show(treemap_fig(Lf), 400)
+            vr = pd.Series({FLAGS[f][0]: v for f, v in Lf.items()}).sort_values().tail(8).reset_index()
+            vr.columns = ["تخلف", "زیان"]
+            show(px.bar(vr, x="زیان", y="تخلف", orientation="h", color_discrete_sequence=[YEL]), 300)
         with b2.container(border=True):
             head("جدول رتبه‌بندی سلامت پارکینگ‌ها", "مقایسه عملکرد مدیران شعب")
             g = lb.reset_index().sort_values("health")
@@ -291,6 +324,34 @@ def dash1(tx, cases):
             st.dataframe(ev, hide_index=True, use_container_width=True, height=460,
                          column_config={"Risk_Score": st.column_config.ProgressColumn("امتیاز ریسک", min_value=0, max_value=100, format="%d")})
             st.download_button("دانلود CSV", ev.to_csv(index=False).encode("utf-8-sig"), "high_risk_events.csv", "text/csv")
+    with T[4]:
+        ex1 = d[d.Out_Time.notna()]
+        r1 = rc[rc.Operator_ID.isin([o for s_ in sites for o in SITES[s_][1]]) & (rc.Date >= a) & (rc.Date <= b)]
+        cdr1 = (r1.CashPMS.sum() - r1.CashDeposit.sum()) / max(r1.CashPMS.sum(), 1)
+        rows = [("نرخ مغایرت نقد صندوق", cdr1 * 100, 1.5, "٪"), ("نسبت ابطال فیش", ex1.Is_Void.mean() * 100, 2, "٪"),
+                ("ویرایش دستی پلاک", ex1.Is_Edit.mean() * 100, 3.5, "٪"), ("ترخیص با فرجه رایگان", ex1.Is_Grace.mean() * 100, 5, "٪"),
+                ("میانگین باز ماندن راهبند", ex1.Barrier_Dwell.mean(), 8, "ثانیه"), ("انحراف تراز ظرفیت", cap.LedgerDrift.max(), 2, "خودرو")]
+        sc = pd.DataFrame([{"شاخص": n, "مقدار": v, "آستانه": t, "واحد": u, "نسبت به آستانه": min(v / t, 2) / 2,
+                            "وضعیت": "🟢 عادی" if v <= t else "🟡 هشدار" if v <= 1.5 * t else "🔴 بحرانی"} for n, v, t, u in rows])
+        with st.container(border=True):
+            head("تابلوی شاخص‌های کنترلی", "مقدار واقعی در برابر آستانه‌های سند · نوار پر = دو برابر آستانه")
+            st.dataframe(sc, hide_index=True, use_container_width=True,
+                         column_config={"مقدار": st.column_config.NumberColumn(format="%.2f"), "آستانه": st.column_config.NumberColumn(format="%.2f"),
+                                        "نسبت به آستانه": st.column_config.ProgressColumn(min_value=0, max_value=1, format=" ")})
+    with T[5]:
+        c1, c2 = st.columns(2)
+        with c1.container(border=True):
+            head("سلامت و زیان بر اساس مدل قراردادی", "مبنای اصلاح قراردادهای پیمانکاری و استیجاری")
+            ct = d.assign(قرارداد=d.Site.map(lambda s_: SITES[s_][0])).groupby("قرارداد").agg(سلامت=("Risk_Score", lambda x: 100 - x.mean()), زیان=("Loss", "sum")).reset_index()
+            fg = go.Figure([go.Bar(x=ct["قرارداد"], y=ct["سلامت"], name="سلامت", marker_color=TEAL),
+                            go.Scatter(x=ct["قرارداد"], y=ct["زیان"], name="زیان", yaxis="y2", mode="lines+markers", line=dict(color=YEL))])
+            fg.update_layout(yaxis2=dict(overlaying="y", side="right", showgrid=False))
+            show(fg, 340)
+        with c2.container(border=True):
+            head("روند روزانه نرخ ناهنجاری هر شعبه")
+            dd = d[d.Out_Time.notna()].assign(day=lambda x: x.Out_Time.dt.date, an=lambda x: x.NFlags > 0).groupby(["day", "Site"]).an.mean().reset_index()
+            show(px.line(dd, x="day", y="an", color="Site", markers=True).update_yaxes(tickformat=".0%"), 340)
+
 
 
 
@@ -329,7 +390,14 @@ def dash2(tx):
     kpi(c[4], "ابطال پس از خروج", f"{ex.Is_Void.mean() * 100:.1f}٪", "آستانه ۲٪", sev(ex.Is_Void.mean(), .02))
     kpi(c[5], "عبور چندگانه", f"{int(d.Flag_Tailgating.sum())}", f"مازاد راهبند {ov.mean() if len(ov) else 0:.1f} ث", "bad" if d.Flag_Tailgating.sum() else "ok")
     st.write("")
-    T = st.tabs(['پارتو و زمان', 'گیت و جریان', 'کیفیت OCR و نویز', 'فهرست رخدادها'])
+    hot = d.groupby(["Weekday", "Hour"])["NFlags"].sum()
+    gsum = d.groupby("Exit_Gate")[fl].sum().sum(axis=1)
+    actions([
+        f"قوانین Rule Engine را برای <b>{cnt.index[0]}</b> و <b>{cnt.index[1] if len(cnt) > 1 else '—'}</b> سخت‌تر یا بازنویسی کنید؛ این دو بیشترین سهم خطا را دارند.",
+        f"اوج تخلف <b>{hot.idxmax()[0]} ساعت {hot.idxmax()[1]}</b> است؛ بازرسی سرزده و نظارت را به همین بازه ببرید.",
+        f"گیت <b>{gsum.idxmax()}</b> بیشترین هشدار را دارد؛ سنسور لوپ، زاویه دوربین و ساعت NTP آن را بررسی کنید.",
+    ], MINT)
+    T = st.tabs(['پارتو و زمان', 'گیت و جریان', 'کیفیت OCR و نویز', 'فهرست رخدادها', 'الگوهای ترکیبی', 'روند و نرخ\u200cها'])
     with T[0]:
         p1, p2 = st.columns(2)
         with p1.container(border=True):
@@ -386,6 +454,38 @@ def dash2(tx):
             lst = d[d[fl].sum(axis=1) > 0].sort_values("Risk_Score", ascending=False)[cols].rename(columns={f: FLAGS[f][0] for f in fl})
             st.dataframe(lst, hide_index=True, use_container_width=True, height=460)
             st.download_button("دانلود CSV", lst.to_csv(index=False).encode("utf-8-sig"), "anomaly_events.csv", "text/csv")
+    with T[4]:
+        e1, e2 = st.columns([3, 2])
+        with e1.container(border=True):
+            head("هم‌رخدادی پرچم‌ها", "هر خانه = تعداد ترددهایی که هر دو پرچم را با هم داشتند")
+            M = d[fl].T.dot(d[fl])
+            M = M.where(~np.eye(len(M), dtype=bool), 0)
+            M.index = M.columns = [FLAGS[f][0] for f in fl]
+            show(px.imshow(M, aspect="auto", color_continuous_scale=[DEEP, TEAL, YEL]), 520)
+        with e2.container(border=True):
+            head("ترددهای چندپرچمی", "دو پرچم یا بیشتر روی یک تردد")
+            mf = d[d.NFlags >= 2].sort_values(["NFlags", "Risk_Score"], ascending=False)[["Event_ID", "Operator_ID", "Plate", "NFlags", "Risk_Score"]]
+            st.dataframe(mf, hide_index=True, use_container_width=True, height=520)
+        with st.container(border=True):
+            head("پروفایل تبانی شیفت-اپراتور", "ویرایش پلاک + سهم نقد بالا + تاخیر راهبند همزمان (امتیاز ترکیبی سند)")
+            gp = d[d.Operator_ID.notna()].groupby(["Operator_ID", "Shift_Date", "Shift"]).agg(ویرایش=("Is_Edit", "sum"), نقد=("Is_Cash", "mean"),
+                                                                                         راهبند=("Barrier_Dwell", "mean"), ریسک=("Risk_Score", "mean"), تردد=("Event_ID", "size")).reset_index()
+            gp["تبانی"] = np.where((gp["ویرایش"] >= 2) & (gp["راهبند"] > 6.5) & (gp["نقد"] > .4), "🔴 احتمال بالا", np.where((gp["ویرایش"] >= 1) & (gp["نقد"] > .4), "🟡 مشکوک", "—"))
+            st.dataframe(gp.sort_values("ریسک", ascending=False).head(40), hide_index=True, use_container_width=True,
+                         column_config={"نقد": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.2f"), "Shift_Date": "تاریخ شیفت"})
+    with T[5]:
+        h1, h2 = st.columns(2)
+        ex2 = ex.assign(day=ex.Out_Time.dt.date)
+        with h1.container(border=True):
+            head("روند روزانه نرخ‌های کلیدی", "ویرایش پلاک · ابطال · فرجه")
+            tr = ex2.groupby("day").agg(MOE=("Is_Edit", "mean"), ابطال=("Is_Void", "mean"), فرجه=("Is_Grace", "mean")).reset_index().melt("day")
+            show(px.line(tr, x="day", y="value", color="variable", markers=True).update_yaxes(tickformat=".0%"), 340)
+        with h2.container(border=True):
+            head("رخدادهای روزانه به تفکیک دسته")
+            rr = [{"روز": dy, "دسته": dm, "تعداد": int(sub[[f for f in fl if FLAGS[f][1] == dm]].sum().sum())}
+                  for dy, sub in ex2.groupby("day") for dm in DOMAINS if any(FLAGS[f][1] == dm for f in fl)]
+            show(px.bar(pd.DataFrame(rr), x="روز", y="تعداد", color="دسته", color_discrete_sequence=[YEL, MINT, TEAL, GRN, CORAL]), 340)
+
 
 
 
@@ -398,17 +498,19 @@ def dash3(tx, rc, cap, names):
     with st.sidebar:
         st.markdown("#### فیلترهای عملیاتی")
         site = st.selectbox("پارکینگ", list(SITES))
+        a, b = date_scope(tx, "d3")
         shift = st.multiselect("شیفت کاری", ["صبح", "عصر", "شب"])
         ops = st.multiselect("صندوقدار", SITES[site][1], format_func=lambda o: f"{o} · {names.get(o, '')}")
         tar = st.multiselect("نوع تعرفه", sorted(tx.Tariff_Type.dropna().unique()))
-    full = tx[tx.Site == site]
+    b3 = tx[tx.Site == site]
+    full = b3[b3.Out_Time.isna() | ((b3.Event_Time >= a) & (b3.Event_Time < b + pd.Timedelta(days=1)))]
     d = full.copy()
     if shift: d = d[d.Shift.isin(shift)]
     if ops: d = d[d.Operator_ID.isin(ops)]
     if tar: d = d[d.Tariff_Type.isin(tar)]
     if d.empty:
         st.warning("داده‌ای برای این فیلترها نیست."); return
-    r = rc[rc.Operator_ID.isin(SITES[site][1])]
+    r = rc[rc.Operator_ID.isin(SITES[site][1]) & (rc.Date >= a) & (rc.Date <= b)]
     if shift: r = r[r.Shift.isin(shift)]
     if ops: r = r[r.Operator_ID.isin(ops)]
     short = (r.CashPMS - r.CashDeposit).sum()
@@ -437,7 +539,13 @@ def dash3(tx, rc, cap, names):
     kpi(c[4], "نسبت نقد", f"{cash * 100:.0f}٪", "سهم نقد از درآمد", "warn" if cash > .4 else "ok")
     kpi(c[5], "بازگشایی دستی راهبند", f"{manual}", "کلید سخت‌افزاری", "bad" if manual else "ok")
     st.write("")
-    T = st.tabs(['صندوقداران و جریان زنده', 'تجهیزات گیت', 'خودروهای رسوبی', 'مغایرت دخل و ظرفیت'])
+    shq = r.assign(k=r.CashPMS - r.CashDeposit).groupby("Operator_ID").k.sum()
+    actions([
+        f"بیشترین کسری دخل مربوط به <b>{shq.idxmax() if len(shq) else '—'}</b> ({money(shq.max() if len(shq) else 0)}) است؛ تطبیق فیزیکی دخل را در پایان همین شیفت انجام دهید.",
+        f"<b>{len(ghosts)}</b> خودروی رسوبی مشکوک را در کارتابل ببینید؛ پیش از هر ترخیص، تصویر ورود و مدت توقف را با نگهبان تطبیق دهید.",
+        f"کلید دستی راهبند <b>{manual}</b> بار استفاده شده؛ دلیل هر مورد را از سرپرست شیفت مکتوب بخواهید.",
+    ], TEAL)
+    T = st.tabs(['صندوقداران و جریان زنده', 'تجهیزات گیت', 'خودروهای رسوبی', 'مغایرت دخل و ظرفیت', 'نقد، الکترونیک و شیفت', 'پروفایل صندوقداران'])
     with T[0]:
         p = d[d.Operator_ID.notna()].groupby("Operator_ID").agg(cash=("Is_Cash", "mean"), void=("Is_Void", "mean"), edit=("Is_Edit", "mean"), grace=("Is_Grace", "mean"))
         p = p.reindex(SITES[site][1]).dropna()
@@ -500,6 +608,40 @@ def dash3(tx, rc, cap, names):
             head("شیفت‌های دارای مغایرت")
             st.dataframe(r[r.CDR > 0][["Date", "Shift", "Operator_ID", "CashPMS", "CashDeposit", "Diff", "CDR"]].sort_values("CDR", ascending=False),
                          hide_index=True, use_container_width=True)
+    with T[4]:
+        w1, w2 = st.columns(2)
+        with w1.container(border=True):
+            head("نقد در برابر الکترونیک به تفکیک شیفت", "درآمد ثبت‌شده (تومان)")
+            pm = d[d.Shift.notna()].assign(نوع=lambda x: np.where(x.Pay_Mode == "نقد", "نقد", np.where(x.Pay_Mode == "پوز", "پوز", "سایر"))).groupby(["Shift", "نوع"]).Fare_Paid.sum().reset_index()
+            show(px.bar(pm, x="Shift", y="Fare_Paid", color="نوع", color_discrete_map={"نقد": YEL, "پوز": TEAL, "سایر": "#6F8C90"}), 330)
+        with w2.container(border=True):
+            head("بازگشایی دستی و راهبند بلند به تفکیک ساعت")
+            mo = d[(d.Manual_Barrier_Open == "بله") | (d.Barrier_Dwell > 12)].groupby("Hour").size().reindex(range(24)).fillna(0).reset_index()
+            mo.columns = ["ساعت", "تعداد"]
+            show(px.bar(mo, x="ساعت", y="تعداد", color_discrete_sequence=[CORAL]), 330)
+        with st.container(border=True):
+            head("سلامت هر شیفت", "۱۰۰ − میانگین امتیاز ریسک")
+            hs = d[d.Shift.notna()].groupby("Shift").Risk_Score.apply(lambda x: 100 - x.mean()).reset_index()
+            show(px.bar(hs, x="Shift", y="Risk_Score", color_discrete_sequence=[MINT]).update_yaxes(range=[0, 100], title="سلامت"), 260)
+    with T[5]:
+        pf = d[d.Operator_ID.notna()].groupby("Operator_ID").agg(تراکنش=("Event_ID", "size"), نقد=("Is_Cash", "mean"), ابطال=("Is_Void", "mean"), ویرایش=("Is_Edit", "mean"),
+                                                              فرجه=("Is_Grace", "mean"), ریسک=("Risk_Score", "mean")).reset_index()
+        pf["نام"] = pf.Operator_ID.map(names)
+        pf["Z نقد"], pf["Z ابطال"] = pf.Operator_ID.map(zz.cash), pf.Operator_ID.map(zz["void"])
+        pf["وضعیت"] = np.where((pf["Z نقد"] > 2.5) & (pf["Z ابطال"] > 2.5), "🔴 بازرسی سرزده", np.where((pf["Z نقد"] > 2) | (pf["Z ابطال"] > 2), "🟡 پایش", "🟢 عادی"))
+        with st.container(border=True):
+            head("پروفایل و Z-Score صندوقداران", "Z نسبت به همه اپراتورهای شبکه · آستانه بازرسی سرزده ۲.۵ در هر دو شاخص")
+            st.dataframe(pf, hide_index=True, use_container_width=True,
+                         column_config={"نقد": st.column_config.ProgressColumn(min_value=0, max_value=1, format="%.2f"), "ابطال": st.column_config.NumberColumn(format="%.3f"),
+                                        "ویرایش": st.column_config.NumberColumn(format="%.3f"), "فرجه": st.column_config.NumberColumn(format="%.3f"),
+                                        "ریسک": st.column_config.NumberColumn(format="%.1f"), "Z نقد": st.column_config.NumberColumn(format="%.2f"), "Z ابطال": st.column_config.NumberColumn(format="%.2f")})
+        with st.container(border=True):
+            head("مقایسه Z نقد و Z ابطال")
+            zm = pf.melt("Operator_ID", ["Z نقد", "Z ابطال"])
+            zf = px.bar(zm, x="Operator_ID", y="value", color="variable", barmode="group", color_discrete_sequence=[YEL, CORAL])
+            zf.add_hline(y=2.5, line_dash="dash", line_color=TXT)
+            show(zf, 300)
+
 
 
 
@@ -541,7 +683,13 @@ def dash4(cases):
     kpi(c[4], "درصد وصول خسارت", f"{recp * 100:.0f}٪", "وصول‌شده / زیان قطعی", "ok" if recp > .6 else "warn")
     kpi(c[5], "تکرار تخلف پرسنل", f"{rep * 100:.0f}٪", "اپراتور با بیش از یک پرونده قطعی", "bad" if rep else "ok")
     st.write("")
-    T = st.tabs(['گردش\u200cکار پرونده\u200cها', 'علل، احکام و ثبت وضعیت', 'عملکرد و مالی'])
+    top_site = f.groupby("Site").Loss.sum()
+    actions([
+        f"<b>{len(crit)}</b> پرونده بحرانی هنوز باز است؛ آن‌ها را اول به بازرس ارشد بسپارید و مهلت ۵ روزه بگذارید.",
+        f"بیشترین زیان پرونده‌ها در <b>{top_site.idxmax()}</b> است ({money(top_site.max())})؛ تمرکز بازرسی باید همان‌جا باشد.",
+        f"درصد وصول <b>{recp * 100:.0f}٪</b> است؛ {'برای بقیه زیان‌های اثبات‌شده، کسر از حقوق یا ضبط سفته را اجرا کنید' if recp < .6 else 'روند وصول مناسب است و مختومه‌سازی را سرعت دهید'}.",
+    ], GRN)
+    T = st.tabs(['گردش\u200cکار پرونده\u200cها', 'علل، احکام و ثبت وضعیت', 'عملکرد و مالی', 'پیری و گلوگاه'])
     with T[0]:
         k1, k2 = st.columns([2, 3])
         with k1.container(border=True):
@@ -592,6 +740,26 @@ def dash4(cases):
             o = f.groupby("Operator_ID").agg(پرونده=("Case_ID", "size"), زیان=("Loss", "sum"),
                                               تایید_شده=("Status", lambda s: s.isin(["تایید تخلف", "وصول و مختومه"]).sum())).reset_index()
             st.dataframe(o.sort_values("پرونده", ascending=False), hide_index=True, use_container_width=True)
+    with T[3]:
+        g1, g2 = st.columns(2)
+        ref = cs.Out_Time.max()
+        with g1.container(border=True):
+            head("پیری پرونده‌های باز", "روز از لحظه کشف · رنگ = اولویت")
+            pdg = f[pend].assign(age=lambda x: (ref - x.Out_Time).dt.days)
+            pdg["بازه"] = pd.cut(pdg.age, [-1, 3, 7, 14, 999], labels=["۰-۳ روز", "۴-۷ روز", "۸-۱۴ روز", "بیش از ۱۴ روز"]).astype(str)
+            show(px.bar(pdg.groupby(["بازه", "Priority"]).size().reset_index(name="تعداد"), x="بازه", y="تعداد", color="Priority",
+                        category_orders={"بازه": ["۰-۳ روز", "۴-۷ روز", "۸-۱۴ روز", "بیش از ۱۴ روز"]},
+                        color_discrete_map={"بحرانی": CORAL, "اولویت بالا": YEL, "متوسط": MINT, "بررسی سیستمی": "#6F8C90"}), 330)
+        with g2.container(border=True):
+            head("ماتریس اولویت × وضعیت")
+            mx = pd.crosstab(f.Priority, f.Status).reindex(index=["بحرانی", "اولویت بالا", "متوسط", "بررسی سیستمی"], columns=STATUSES, fill_value=0)
+            show(px.imshow(mx, text_auto=True, aspect="auto", color_continuous_scale=[DEEP, TEAL, YEL]), 330)
+        with st.container(border=True):
+            head("پرونده‌های باز با بیشترین زیان", "اولویت تصمیم کمیته")
+            st.dataframe(f[pend].sort_values("Loss", ascending=False).head(15)[["Case_ID", "Priority", "Site", "Operator_ID", "Violation", "Loss", "Inspector", "Status"]],
+                         hide_index=True, use_container_width=True,
+                         column_config={"Loss": st.column_config.NumberColumn("زیان (ت)", format="%d")})
+
 
 
 
@@ -609,4 +777,4 @@ tx, rc, cap, names = load(src)
 cases = make_cases(tx)
 st.sidebar.caption("داده نمونه تک‌پارکینگ است؛ برای نمایش ساختار چندشعبه‌ای، اپراتورها بین ۴ شعبه فرضی تقسیم شده‌اند.")
 key = page[0].translate(str.maketrans("۱۲۳۴", "1234"))
-{"1": lambda: dash1(tx, cases), "2": lambda: dash2(tx), "3": lambda: dash3(tx, rc, cap, names), "4": lambda: dash4(cases)}[key]()
+{"1": lambda: dash1(tx, cases, rc, cap), "2": lambda: dash2(tx), "3": lambda: dash3(tx, rc, cap, names), "4": lambda: dash4(cases)}[key]()
