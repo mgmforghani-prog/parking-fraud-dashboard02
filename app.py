@@ -42,6 +42,12 @@ header[data-testid="stHeader"],footer,#MainMenu{{display:none}}
 .kpi .kh::before{{content:'';width:8px;height:8px;border-radius:50%;background:var(--sc,{GRN})}}
 .kpi.hero{{background:linear-gradient(135deg,{SLATE},{SURF});border:2px solid var(--ac);box-shadow:0 0 0 4px rgba(255,255,255,.03);padding:20px 24px}}
 .kpi.hero .kl{{color:var(--ac);font-weight:700;font-size:.92rem}} .kpi.hero b{{font-size:2.7rem;font-weight:800;color:{TXT}}}
+div[data-baseweb="tab-list"]{{gap:8px;flex-wrap:wrap;border:0;margin:6px 0 14px}}
+button[data-baseweb="tab"]{{background:{SURF};border:1px solid rgba(255,255,255,.14);border-radius:999px;padding:9px 22px;height:auto}}
+button[data-baseweb="tab"] p{{color:{TXT}!important;font-size:.95rem;font-weight:600}}
+button[data-baseweb="tab"][aria-selected="true"]{{background:{YEL};border-color:{YEL}}}
+button[data-baseweb="tab"][aria-selected="true"] p{{color:{DEEP}!important;font-weight:800}}
+div[data-baseweb="tab-highlight"],div[data-baseweb="tab-border"]{{display:none}}
 .ct{{font-weight:700;font-size:.98rem}} .cs{{color:{SUB};font-size:.78rem;margin-bottom:6px}}
 .note{{background:rgba(255,224,138,.1);border:1px dashed {YEL};border-radius:14px;padding:8px 14px;font-size:.78rem;color:{YEL};margin:6px 0}}
 .alert{{border-radius:18px;padding:12px 18px;font-weight:600;margin-bottom:12px}}
